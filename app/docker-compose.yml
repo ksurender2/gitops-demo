@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  ecs-secrets-demo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ecs-secrets-demo-local
+    ports:
+      - "3000:3000"
+    environment:
+      # Regular non-sensitive Environment Variables
+      - APP_NAME=ECS Local Docker Compose Test
+      - APP_ENV=local-development
+      - PORT=3000
+      - LOG_LEVEL=debug
+      - FEATURE_ANALYTICS=enabled
+      # Simulating secrets injected by Secrets Manager locally
+      - DATABASE_PASSWORD=local_simulated_secret_password_xyz999
+      - API_SECRET_KEY=local_simulated_api_key_abc123
+      - SECRET_SOURCE=Docker Compose Local Simulation
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped

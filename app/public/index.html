@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AWS ECS Fargate + Secrets Manager Demo</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%);
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --card-border: rgba(255, 255, 255, 0.1);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-aws: #ff9900;
+      --accent-blue: #38bdf8;
+      --accent-green: #4ade80;
+      --accent-purple: #c084fc;
+      --accent-red: #f87171;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .badge-aws {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(255, 153, 0, 0.15);
+      border: 1px solid rgba(255, 153, 0, 0.4);
+      color: var(--accent-aws);
+      padding: 0.4rem 1rem;
+      border-radius: 9999px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.75rem;
+      background: linear-gradient(to right, #ffffff, #93c5fd);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    p.subtitle {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      max-width: 650px;
+      margin: 0 auto;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--card-border);
+      border-radius: 1rem;
+      padding: 1.5rem;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    .card-title {
+      font-size: 1.2rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .card-icon {
+      font-size: 1.4rem;
+    }
+
+    .kv-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
+    .kv-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      background: rgba(15, 23, 42, 0.5);
+      padding: 0.75rem 1rem;
+      border-radius: 0.5rem;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .kv-key {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .kv-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.95rem;
+      color: #e2e8f0;
+      word-break: break-all;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 0.25rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .tag-env {
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--accent-blue);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+    }
+
+    .tag-secret {
+      background: rgba(192, 132, 252, 0.2);
+      color: var(--accent-purple);
+      border: 1px solid rgba(192, 132, 252, 0.4);
+    }
+
+    .tag-task {
+      background: rgba(74, 222, 128, 0.2);
+      color: var(--accent-green);
+      border: 1px solid rgba(74, 222, 128, 0.4);
+    }
+
+    .secret-masked {
+      filter: blur(4px);
+      transition: filter 0.3s ease;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .secret-masked:hover {
+      filter: blur(0px);
+    }
+
+    .refresh-hint {
+      text-align: center;
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px dashed rgba(56, 189, 248, 0.3);
+      border-radius: 0.75rem;
+      color: var(--accent-blue);
+      font-size: 0.95rem;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: auto;
+      padding-top: 2rem;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+    }
+
+    footer a {
+      color: var(--accent-aws);
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="badge-aws">
+        <span>☁️</span> AWS ECS Fargate + ECR + Secrets Manager
+      </div>
+      <h1>Container Configuration & Load Balancer Dashboard</h1>
+      <p class="subtitle">
+        Demonstrating Fargate task execution, configuration injection from AWS Secrets Manager, and Application Load Balancer request distribution.
+      </p>
+    </header>
+
+    <div class="grid">
+      <!-- Card 1: Environment Variables -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="card-icon">🌐</span> Environment Variables
+          </div>
+          <span class="tag tag-env">Task Definition</span>
+        </div>
+        <div class="kv-list">
+          <div class="kv-item">
+            <div class="kv-key">APP_ENV</div>
+            <div class="kv-value" id="env-app-env">Loading...</div>
+          </div>
+          <div class="kv-item">
+            <div class="kv-key">APP_PORT</div>
+            <div class="kv-value" id="env-app-port">Loading...</div>
+          </div>
+          <div class="kv-item">
+            <div class="kv-key">LOG_LEVEL</div>
+            <div class="kv-value" id="env-log-level">Loading...</div>
+          </div>
+          <div class="kv-item">
+            <div class="kv-key">FEATURE_ANALYTICS</div>
+            <div class="kv-value" id="env-feature-analytics">Loading...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 2: Secrets Manager -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="card-icon">🔐</span> AWS Secrets Manager
+          </div>
+          <span class="tag tag-secret">Injected Secrets</span>
+        </div>
+        <div class="kv-list">
+          <div class="kv-item">
+            <div class="kv-key">DATABASE_PASSWORD</div>
+            <div class="kv-value secret-masked" id="secret-db-pass" title="Hover/Click to reveal">Loading...</div>
+          </div>
+          <div class="kv-item">
+            <div class="kv-key">API_SECRET_KEY</div>
+            <div class="kv-value secret-masked" id="secret-api-key" title="Hover/Click to reveal">Loading...</div>
+          </div>
+          <div class="kv-item">
+            <div class="kv-key">SECRET_SOURCE</div>
+            <div class="kv-value" id="secret-source">Loading...</div>
+          </div>
+          <div class="kv-item">
+            <div class="kv-key">INJECTION_METHOD</div>
+            <div class="kv-value" style="color: var(--accent-purple); font-weight: 600;">ECS Agent valueFrom (ARN)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 3: Fargate Instance & ALB Metadata -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="card-icon">🚀</span> Fargate Task & Load Balancer
+          </div>
+          <span class="tag tag-task">Task Runtime</span>
+        </div>
+        <div class="kv-list">
+          <div class="kv-item">
+            <div class="kv-key">CONTAINER HOSTNAME / TASK ID</div>
+            <div class="kv-value" id="task-hostname" style="color: var(--accent-green); font-weight: 600;">Loading...</div>
+          </div>
+          <div class="kv-item">
+            <div class="kv-key">CONTAINER IP ADDRESS</div>
+            <div class="kv-value" id="task-ip">Loading...</div>
+          </div>
+          <div class="kv-item">
+            <div class="kv-key">NODE RUNTIME VERSION</div>
+            <div class="kv-value" id="task-node">Loading...</div>
+          </div>
+          <div class="kv-item">
+            <div class="kv-key">REQUEST HIT COUNT (THIS TASK)</div>
+            <div class="kv-value" id="task-hits">Loading...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="refresh-hint">
+      💡 <strong>Pro-Tip for Students:</strong> Refresh this page multiple times! If your ECS Service has 2 or more Fargate tasks running behind the Load Balancer, you will see the <strong>CONTAINER HOSTNAME / TASK ID</strong> change as the ALB routes traffic across different tasks.
+    </div>
+
+    <footer>
+      George AWS Container Architecture Series &bull; <a href="/health" target="_blank">Health Check (/health)</a> &bull; <a href="/api/config" target="_blank">Raw JSON API (/api/config)</a>
+    </footer>
+  </div>
+
+  <script>
+    async function loadConfig() {
+      try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+
+        // Environment Variables
+        document.getElementById('env-app-env').textContent = data.env.APP_ENV || 'N/A';
+        document.getElementById('env-app-port').textContent = data.env.PORT || '3000';
+        document.getElementById('env-log-level').textContent = data.env.LOG_LEVEL || 'info';
+        document.getElementById('env-feature-analytics').textContent = data.env.FEATURE_ANALYTICS || 'disabled';
+
+        // Secrets
+        document.getElementById('secret-db-pass').textContent = data.secrets.DATABASE_PASSWORD || '[NOT_SET]';
+        document.getElementById('secret-api-key').textContent = data.secrets.API_SECRET_KEY || '[NOT_SET]';
+        document.getElementById('secret-source').textContent = data.secrets.SECRET_SOURCE || 'AWS Secrets Manager';
+
+        // Task Metadata
+        document.getElementById('task-hostname').textContent = data.task.hostname || 'Unknown';
+        document.getElementById('task-ip').textContent = data.task.ip || '127.0.0.1';
+        document.getElementById('task-node').textContent = data.task.nodeVersion || 'N/A';
+        document.getElementById('task-hits').textContent = data.task.hitCount || '1';
+      } catch (err) {
+        console.error('Error fetching container details:', err);
+      }
+    }
+
+    // Toggle blur on click for secret elements
+    document.querySelectorAll('.secret-masked').forEach(el => {
+      el.addEventListener('click', () => {
+        el.classList.toggle('secret-masked');
+      });
+    });
+
+    loadConfig();
+  </script>
+</body>
+</html>

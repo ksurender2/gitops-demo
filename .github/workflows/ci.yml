@@ -1,0 +1,128 @@
+# ==============================================================================
+# 📦 STAGE 1: CONTINUOUS INTEGRATION (CI) PIPELINE
+# Purpose: Build the Docker image from ./app, tag it with 3 naming conventions,
+#          and push the artifacts to Amazon ECR.
+# ==============================================================================
+
+
+# 1. WORKFLOW NAME (Visible in GitHub Actions UI)
+name: Continuous Integration (CI) - Build & Push to ECR
+
+# 2. EVENT TRIGGERS (When does this workflow execute?)
+on:
+  # Trigger 1: Automatically run whenever code is pushed to the 'main' branch
+  push:
+    branches: [ "main" ]
+
+  # Trigger 2: Automatically run whenever a Pull Request is opened against 'main'
+  pull_request:
+    branches: [ "main" ]
+
+  # Trigger 3: Allow manual execution from the GitHub Actions web interface
+  workflow_dispatch:
+
+# 3. SECURITY PERMISSIONS (Least Privilege Rule)
+permissions:
+  contents: read      # Permission to clone/checkout the repository code
+  id-token: write     # Permission to request OIDC identity tokens (if using keyless authentication)
+
+# 4. JOBS DEFINITION (The work steps to perform)
+jobs:
+  build-and-push:
+    name: Build Docker Image & Push to Amazon ECR
+    
+    # RUNNER SPECIFICATION:
+    # Use 'self-hosted' for your Ubuntu EC2 server (or 'ubuntu-latest' for GitHub-hosted)
+    runs-on: self-hosted
+
+    steps:
+      # ------------------------------------------------------------------------
+      # STEP 1: Clone the GitHub Repository to the Runner Workspace
+      # ------------------------------------------------------------------------
+      - name: 1. Checkout Source Code
+        uses: actions/checkout@v4
+        # Explanation: 'actions/checkout' clones your git repo into the runner's working folder
+
+      # ------------------------------------------------------------------------
+      # STEP 2: Authenticate Runner with AWS
+      # ------------------------------------------------------------------------
+      - name: 2. Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Reads static IAM credentials securely from GitHub Repository Secrets
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'ap-south-1' }}
+
+      # ------------------------------------------------------------------------
+      # STEP 3: Authenticate Docker CLI with Amazon ECR Registry
+      # ------------------------------------------------------------------------
+      - name: 3. Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        # Explanation: Performs 'aws ecr get-login-password' behind the scenes
+        # Output: '${{ steps.login-ecr.outputs.registry }}' (e.g. 730933263396.dkr.ecr.ap-south-1.amazonaws.com)
+
+      # ------------------------------------------------------------------------
+      # STEP 4: Set Image Tag Naming Conventions
+      # ------------------------------------------------------------------------
+      - name: 4. Extract Image Metadata & Tag Conventions
+        id: meta
+        run: |
+          # 1. Resolve ECR Registry Host from previous step
+          ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          
+          # 2. Resolve Repository Name from GitHub Secrets (defaulting to ecs-secrets-demo)
+          ECR_REPOSITORY="${{ secrets.ECR_REPOSITORY || 'ecs-secrets-demo' }}"
+          
+          # 3. Convention 1: Short 7-character Git Commit SHA (e.g. a1b2c3d)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          
+          # 4. Convention 2: Sequential Build Number (e.g. build-14)
+          BUILD_TAG="build-${{ github.run_number }}"
+          
+          # 5. Export variables to $GITHUB_OUTPUT so subsequent steps can use them
+          echo "ecr_registry=${ECR_REGISTRY}" >> $GITHUB_OUTPUT
+          echo "ecr_repository=${ECR_REPOSITORY}" >> $GITHUB_OUTPUT
+          echo "tag_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "tag_build=${BUILD_TAG}" >> $GITHUB_OUTPUT
+          echo "full_image_uri=${ECR_REGISTRY}/${ECR_REPOSITORY}:${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      # ------------------------------------------------------------------------
+      # STEP 5: Build Docker Container & Push to Amazon ECR
+      # ------------------------------------------------------------------------
+      - name: 5. Build, Tag, and Push Docker Image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.meta.outputs.ecr_registry }}
+          ECR_REPOSITORY: ${{ steps.meta.outputs.ecr_repository }}
+          TAG_SHA: ${{ steps.meta.outputs.tag_sha }}
+          TAG_BUILD: ${{ steps.meta.outputs.tag_build }}
+        run: |
+          echo "=========================================================="
+          echo "🔨 BUILDING DOCKER IMAGE from ./app/Dockerfile..."
+          echo "=========================================================="
+          
+          # BUILD COMMAND:
+          # Uses --provenance=false to ensure a single clean manifest without extra attestation blobs
+          docker build --provenance=false -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${TAG_SHA} ./app
+          
+          # TAGGING CONVENTIONS:
+          # Create additional tags pointing to the same built image layer
+          docker tag ${ECR_REGISTRY}/${ECR_REPOSITORY}:${TAG_SHA} ${ECR_REGISTRY}/${ECR_REPOSITORY}:${TAG_BUILD}
+          docker tag ${ECR_REGISTRY}/${ECR_REPOSITORY}:${TAG_SHA} ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest
+          
+          echo "=========================================================="
+          echo "📤 PUSHING IMAGES TO AMAZON ECR:"
+          echo "   1. Commit SHA Tag:   ${ECR_REGISTRY}/${ECR_REPOSITORY}:${TAG_SHA}"
+          echo "   2. Build Number Tag: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${TAG_BUILD}"
+          echo "   3. Latest Tag:       ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+          echo "=========================================================="
+          
+          # PUSH COMMANDS:
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${TAG_SHA}
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${TAG_BUILD}
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest
+          
+          echo "=========================================================="
+          echo "🎉 SUCCESS: All Docker image tags pushed to Amazon ECR!"
+          echo "=========================================================="

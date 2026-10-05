@@ -1,0 +1,24 @@
+{
+  "name": "ecs-secrets-demo-app",
+  "version": "1.0.0",
+  "description": "Beginner-friendly Node.js Express app for demonstrating AWS ECS Fargate, ECR, Secrets Manager, and ALB",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "node --watch app.js"
+  },
+  "keywords": [
+    "aws",
+    "ecs",
+    "fargate",
+    "ecr",
+    "secrets-manager",
+    "alb",
+    "docker"
+  ],
+  "author": "George Container Labs",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

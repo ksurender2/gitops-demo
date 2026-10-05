@@ -1,0 +1,146 @@
+# ==============================================================================
+# 🚀 STAGE 2: CONTINUOUS DEPLOYMENT (CD) PIPELINE
+# Purpose: Render the new ECR Docker image URI into task-definition.json,
+#          update the AWS ECS Fargate Service, and wait for health check stability.
+# ==============================================================================
+
+# 1. WORKFLOW NAME (Visible in GitHub Actions UI)
+name: Continuous Deployment (CD) - Deploy to AWS ECS Fargate
+
+# 2. EVENT TRIGGERS (When does this workflow execute?)
+on:
+  # Trigger 1: AUTOMATIC - Runs after CI ('ci.yml') completes with 'success' on 'main'
+  workflow_run:
+    workflows: ["Continuous Integration (CI) - Build & Push to ECR"]
+    types:
+      - completed
+    branches: [ "main" ]
+
+  # Trigger 2: MANUAL - Allows manual triggers from GitHub Actions UI with custom image tag
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker Image Tag to deploy (e.g. latest, build-14, or commit SHA)"
+        required: false
+        default: "latest"
+
+# 3. SECURITY PERMISSIONS
+permissions:
+  contents: read      # Read repository code and task-definition.json
+  id-token: write     # Request OIDC token if configured
+
+# 4. JOBS DEFINITION
+jobs:
+  deploy-to-ecs:
+    name: Deploy Container to AWS ECS Fargate
+    
+    # CONDITION RULE:
+    # Only run if triggered manually OR if the CI pipeline completed successfully!
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    
+    # RUNNER SPECIFICATION:
+    # Use 'self-hosted' for your Ubuntu EC2 server (or 'ubuntu-latest' for GitHub-hosted)
+    runs-on: self-hosted
+
+    steps:
+      # ------------------------------------------------------------------------
+      # STEP 1: Clone Repository to obtain task-definition.json
+      # ------------------------------------------------------------------------
+      - name: 1. Checkout Source Code
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------------
+      # STEP 2: Authenticate Runner with AWS
+      # ------------------------------------------------------------------------
+      - name: 2. Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'ap-south-1' }}
+
+      # ------------------------------------------------------------------------
+      # STEP 3: Log in to Amazon ECR
+      # ------------------------------------------------------------------------
+      - name: 3. Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ------------------------------------------------------------------------
+      # STEP 4: Determine Target Docker Image Tag to Deploy
+      # ------------------------------------------------------------------------
+      - name: 4. Resolve Target Docker Image URI
+        id: resolve-image
+        run: |
+          ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          ECR_REPOSITORY="${{ secrets.ECR_REPOSITORY || 'ecs-secrets-demo' }}"
+          
+          # Logic: If manually triggered with an input tag, use it. Otherwise, use git short SHA or latest.
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            TAG="${{ inputs.image_tag }}"
+          else
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            TAG="${SHORT_SHA}"
+          fi
+          
+          FULL_IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${TAG}"
+          echo "=========================================================="
+          echo "🎯 TARGET IMAGE FOR DEPLOYMENT: ${FULL_IMAGE}"
+          echo "=========================================================="
+          echo "image_uri=${FULL_IMAGE}" >> $GITHUB_OUTPUT
+
+      # ------------------------------------------------------------------------
+      # STEP 5: Download Active Task Definition Live from AWS ECS
+      # ------------------------------------------------------------------------
+      - name: 5. Download Active Task Definition from AWS
+        run: |
+          TASK_DEF_NAME="${{ secrets.ECS_TASK_DEFINITION || 'ecs-secrets-demo-task' }}"
+          echo "=========================================================="
+          echo "📥 FETCHING ACTIVE TASK DEFINITION FROM AWS: ${TASK_DEF_NAME}"
+          echo "=========================================================="
+          
+          # Download task definition JSON directly from AWS ECS API
+          aws ecs describe-task-definition \
+            --task-definition "${TASK_DEF_NAME}" \
+            --query taskDefinition > task-definition.json
+          
+          echo "✅ Active task definition downloaded successfully!"
+
+      # ------------------------------------------------------------------------
+      # STEP 6: Dynamically Update task-definition.json with New Image URI
+      # ------------------------------------------------------------------------
+      - name: 6. Render Amazon ECS Task Definition
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          # Dynamic task definition JSON file downloaded in Step 5
+          task-definition: task-definition.json
+          
+          # Container name inside containerDefinitions list
+          container-name: Main
+          
+          # Replace 'image' field with the new ECR image URI built in CI
+          image: ${{ steps.resolve-image.outputs.image_uri }}
+
+      # ------------------------------------------------------------------------
+      # STEP 7: Deploy New Task Definition Revision to AWS ECS Fargate Service
+      # ------------------------------------------------------------------------
+      - name: 7. Deploy Task Definition to AWS ECS Service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ secrets.ECS_SERVICE || 'ecs-secrets-service' }}
+          cluster: ${{ secrets.ECS_CLUSTER || 'ecs-secrets-cluster' }}
+          wait-for-service-stability: true
+
+      # ------------------------------------------------------------------------
+      # STEP 8: Print Deployment Summary
+      # ------------------------------------------------------------------------
+      - name: 8. Deployment Status Summary
+        run: |
+          echo "=========================================================="
+          echo "🎉 SUCCESS: Deployed container to AWS ECS Fargate!"
+          echo "   Cluster:        ${{ secrets.ECS_CLUSTER || 'ecs-secrets-cluster' }}"
+          echo "   Service:        ${{ secrets.ECS_SERVICE || 'ecs-secrets-service' }}"
+          echo "   Deployed Image: ${{ steps.resolve-image.outputs.image_uri }}"
+          echo "=========================================================="
