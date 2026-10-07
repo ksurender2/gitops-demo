@@ -117,7 +117,7 @@ jobs:
           task-definition: task-definition.json
           
           # Container name inside containerDefinitions list
-          container-name: Main
+          container-name: ecs-secrets-app
           
           # Replace 'image' field with the new ECR image URI built in CI
           image: ${{ steps.resolve-image.outputs.image_uri }}
